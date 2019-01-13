@@ -21,22 +21,22 @@ class Ec2zcssh(object):
     def run(self):
         parser = argparse.ArgumentParser(description="Create an iTterm2 window")
         parser.add_argument(
-                '--filter', 
+                '-f', '--filter', 
                 action='append', 
                 help="Comma-separated boto3-style instance filters. Example: tag:role=db,instance-state-name=running")
         parser.add_argument(
-                '--instance',
+                '-i', '--instance',
                 action='append',
                 help="Comma-separated list of instances to connect")
         parser.add_argument(
-                '--public',
+                '-p', '--public',
                 action='store_true',
                 help='Use public IPs instead of private')
         parser.add_argument(
-                '--login',
+                '-l', '--login',
                 help="Alternate username to login with")
         parser.add_argument(
-                '--fullscreen',
+                '-F', '--fullscreen',
                 action='store_true',
                 help="Start iTerm2 in fullscreen")
         parser.add_argument(
