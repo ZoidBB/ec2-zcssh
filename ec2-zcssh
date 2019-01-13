@@ -66,7 +66,7 @@ class EC2ZCSSH(object):
     def validate_args(self, args):
         if not args.ips and \
            not args.filter and \
-           not args.instances:
+           not args.instance:
             print('You must specify at at least one filter, instance id, or IP address')
             sys.exit(1)
 
