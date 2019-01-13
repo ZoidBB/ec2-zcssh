@@ -11,7 +11,7 @@ import sys
 import boto3
 from termcolor import colored
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 class Ec2zcssh(object):
     def __init__(self):
@@ -40,30 +40,39 @@ class Ec2zcssh(object):
                 action='store_true',
                 help="Start iTerm2 in fullscreen")
         parser.add_argument(
+                '--version',
+                action='version',
+                version='%s %s' % (sys.argv[0], __version__))
+        
+        group = parser.add_mutually_exclusive_group()
+        group.add_argument(
                 '--die-on-warning',
                 action='store_true',
                 help="Die on any warning")
-        parser.add_argument(
+        group.add_argument(
                 '--dry-run',
                 action='store_true',
                 help="Fetch IPs without executing zcssh")
-        parser.add_argument(
+
+        group = parser.add_mutually_exclusive_group()
+        group.add_argument(
                 '--verbose',
                 action='store_true',
                 help="More verbose output"
                 )
-        parser.add_argument(
+        group.add_argument(
                 '--quiet',
                 action='store_true',
                 help="Suppress non-error output")
-        parser.add_argument(
+        group.add_argument(
                 '--silent',
                 action='store_true',
                 help="Suppress all output")
-        parser.add_argument(
+        group.add_argument(
                 '--debug',
                 action='store_true',
                 help="Enable debug output")
+
         parser.add_argument(
                 'ips',
                 nargs='*',
@@ -197,7 +206,7 @@ class Ec2zcssh(object):
         print(colored("OK: %s" % text, 'green'))
 
     def info(self, text):
-        if not self.args.verbose: return
+        if not self.args.verbose and not self.args.debug: return
         print("INFO: %s" % text)
 
     def debug(self, text):
