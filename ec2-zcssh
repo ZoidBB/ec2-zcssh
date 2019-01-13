@@ -11,7 +11,7 @@ import sys
 import boto3
 from termcolor import colored
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 class Ec2zcssh(object):
     def __init__(self):
