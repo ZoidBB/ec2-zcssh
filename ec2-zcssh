@@ -11,7 +11,7 @@ import sys
 import boto3
 from termcolor import colored
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 class Ec2zcssh(object):
     def __init__(self):
@@ -57,6 +57,10 @@ class Ec2zcssh(object):
                 action='store_true',
                 help="Suppress non-error output")
         parser.add_argument(
+                '--silent',
+                action='store_true',
+                help="Suppress all output")
+        parser.add_argument(
                 '--debug',
                 action='store_true',
                 help="Enable debug output")
@@ -66,53 +70,60 @@ class Ec2zcssh(object):
                 help='extra IPs to connect')
 
         self.args = parser.parse_args()
-        self.validate_args()
+        try:
+            self.validate_args()
 
-        ips = []
+            ips = []
 
-        for ip in self.args.ips:
-            if not ip in ips:
-                ips.append(ip)
-            else:
-                self.warning('Deduplicating IP %s' % ip)
+            for ip in self.args.ips:
+                if not ip in ips:
+                    ips.append(ip)
+                else:
+                    self.warning('Deduplicating IP %s' % ip)
 
-        if self.args.filter:
-            instance_filters = self.process_filters(self.args.filter)
-            for orig_filter, instance_filter in instance_filters.items():
-                _ips = self.fetch_ec2_ips(instance_filter=instance_filter, use_public=self.args.public)
-                if not _ips:
-                    self.warning('No ips found matching filter \'%s\'' % orig_filter)
-                for ip in _ips.values():
+            if self.args.filter:
+                instance_filters = self.process_filters(self.args.filter)
+                for orig_filter, instance_filter in instance_filters.items():
+                    _ips = self.fetch_ec2_ips(instance_filter=instance_filter, use_public=self.args.public)
+                    if not _ips:
+                        self.warning('No ips found matching filter \'%s\'' % orig_filter)
+                    for ip in _ips.values():
+                        if not ip in ips:
+                            ips.append(ip)
+                        else:
+                            self.warning('WARNING: Deduplicating IP %s' % ip)
+
+            if self.args.instance:
+                instances = []
+                for instance in self.args.instance:
+                    instances += instance.split(",")
+                _ips = self.fetch_ec2_ips(instance_ids=instances, use_public=self.args.public)
+                for ip in self.args.ips:
                     if not ip in ips:
                         ips.append(ip)
                     else:
                         self.warning('WARNING: Deduplicating IP %s' % ip)
 
-        if self.args.instance:
-            _ips = self.fetch_ec2_ips(instance_ids=self.args.instance, use_public=self.args.public)
-            for ip in self.args.ips:
-                if not ip in ips:
-                    ips.append(ip)
-                else:
-                    self.warning('WARNING: Deduplicating IP %s' % ip)
+            if self.should_die:
+                self.error("Exiting due to warning or error")
+                sys.exit(1)
 
-        if self.should_die:
-            self.error("Exiting due to warning or error")
-            return
+            self.ok("Found %i matching IPs:" % len(ips))
+            self.info(', '.join(ips))
+            if self.args.dry_run:
+                self.ok("Dry-run complete")
+                return
 
-        self.ok("Found %i matching IPs:" % len(ips))
-        self.info(', '.join(ips))
-        if self.args.dry_run:
-            self.ok("Dry-run complete")
-            return
+            if not self.args.dry_run and not self.should_die:
+                process = subprocess.Popen(
+                        self.make_cmd(ips), 
+                        stdout=sys.stdout,
+                        stderr=sys.stderr,
+                        stdin=sys.stdin)
+                process.communicate()
 
-        if not self.args.dry_run and not self.should_die:
-            process = subprocess.Popen(
-                    self.make_cmd(ips), 
-                    stdout=sys.stdout,
-                    stderr=sys.stderr,
-                    stdin=sys.stdin)
-            process.communicate()
+        except Exception as e:
+            self.error(e)
 
     def make_cmd(self, ips):
         cmd = ['zcssh']
@@ -172,15 +183,17 @@ class Ec2zcssh(object):
         return _ips
 
     def warning(self, text):
+        if self.args.quiet or self.args.silent: return
         print(colored("WARNING: %s" % text, 'yellow'), file=sys.stderr)
         if self.args.die_on_warning: self.should_die = True
 
     def error(self, text):
+        if self.args.silent: return
         print(colored("ERROR: %s" % text, 'red'), file=sys.stderr)
         self.should_die = True
 
     def ok(self, text):
-        if self.args.quiet: return
+        if self.args.quiet or self.args.silent: return
         print(colored("OK: %s" % text, 'green'))
 
     def info(self, text):
