@@ -1,12 +1,23 @@
 #!/usr/bin/env python
 from __future__ import print_function
 
+# stdlib
 import argparse
-import boto3
+import json
 import subprocess
 import sys
 
-class EC2ZCSSH(object):
+# 3rd-party
+import boto3
+from termcolor import colored
+
+__version__ = "0.2.0"
+
+class Ec2zcssh(object):
+    def __init__(self):
+        self.args = None
+        self.should_die = False
+
     def run(self):
         parser = argparse.ArgumentParser(description="Create an iTterm2 window")
         parser.add_argument(
@@ -29,73 +40,107 @@ class EC2ZCSSH(object):
                 action='store_true',
                 help="Start iTerm2 in fullscreen")
         parser.add_argument(
+                '--die-on-warning',
+                action='store_true',
+                help="Die on any warning")
+        parser.add_argument(
+                '--dry-run',
+                action='store_true',
+                help="Fetch IPs without executing zcssh")
+        parser.add_argument(
+                '--verbose',
+                action='store_true',
+                help="More verbose output"
+                )
+        parser.add_argument(
+                '--quiet',
+                action='store_true',
+                help="Suppress non-error output")
+        parser.add_argument(
+                '--debug',
+                action='store_true',
+                help="Enable debug output")
+        parser.add_argument(
                 'ips',
                 nargs='*',
                 help='extra IPs to connect')
 
-        args = parser.parse_args()
-        self.validate_args(args)
-        
+        self.args = parser.parse_args()
+        self.validate_args()
+
         ips = []
 
-        for ip in args.ips:
+        for ip in self.args.ips:
             if not ip in ips:
                 ips.append(ip)
             else:
-                print('WARNING: Deduplicating IP %s' % ip)
+                self.warning('Deduplicating IP %s' % ip)
 
-        if args.filter:
-            instance_filters = self.process_filters(args.filter)
-            for instance_filter in instance_filters:
-                _ips = self.fetch_ec2_ips(instance_filter=instance_filter, use_public=args.public)
-                for ip in _ips:
+        if self.args.filter:
+            instance_filters = self.process_filters(self.args.filter)
+            for orig_filter, instance_filter in instance_filters.items():
+                _ips = self.fetch_ec2_ips(instance_filter=instance_filter, use_public=self.args.public)
+                if not _ips:
+                    self.warning('No ips found matching filter \'%s\'' % orig_filter)
+                for ip in _ips.values():
                     if not ip in ips:
                         ips.append(ip)
                     else:
-                        print('WARNING: Deduplicating IP %s' % ip)
+                        self.warning('WARNING: Deduplicating IP %s' % ip)
 
-        if args.instance:
-            _ips = self.fetch_ec2_ips(instance_ids=args.instance, use_public=args.public)
-            for ip in args.ips:
+        if self.args.instance:
+            _ips = self.fetch_ec2_ips(instance_ids=self.args.instance, use_public=self.args.public)
+            for ip in self.args.ips:
                 if not ip in ips:
                     ips.append(ip)
                 else:
-                    print('WARNING: Deduplicating IP %s' % ip)
+                    self.warning('WARNING: Deduplicating IP %s' % ip)
 
-        process = subprocess.Popen(
-            self.make_cmd(ips, args), 
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-            stdin=sys.stdin)
-        process.communicate()
+        if self.should_die:
+            self.error("Exiting due to warning or error")
+            return
 
-    def make_cmd(self, ips, args):
+        self.ok("Found %i matching IPs:" % len(ips))
+        self.info(', '.join(ips))
+        if self.args.dry_run:
+            self.ok("Dry-run complete")
+            return
+
+        if not self.args.dry_run and not self.should_die:
+            process = subprocess.Popen(
+                    self.make_cmd(ips), 
+                    stdout=sys.stdout,
+                    stderr=sys.stderr,
+                    stdin=sys.stdin)
+            process.communicate()
+
+    def make_cmd(self, ips):
         cmd = ['zcssh']
-        if args.login:
+        if self.args.login:
             cmd.append('-l')
-            cmd.append(args.login)
-        if args.fullscreen:
+            cmd.append(self.args.login)
+        if self.args.fullscreen:
             cmd.append('-F')
         cmd += ips
         return cmd
 
-
-    def validate_args(self, args):
-        if not args.ips and \
-           not args.filter and \
-           not args.instance:
-            print('You must specify at at least one filter, instance id, or IP address')
-            sys.exit(1)
+    def validate_args(self):
+        if not self.args.ips and \
+                not self.args.filter and \
+                not self.args.instance:
+                    self.error('ERROR: You must specify at at least one filter, instance id, or IP address')
 
     def process_filters(self, filters):
-        instance_filters = []
+        instance_filters = {}
         for filter_spec in filters:
+            if filter_spec in instance_filters:
+                self.warning("Duplicate filter spec: %s" % filter_spec)
             filters = {  } # default to only getting running instances
             for _filter in filter_spec.split(","):
                 name, values = _filter.split("=")
                 values = values.split(":")
                 filters[name] = filters.get(name, []) + values
-            instance_filters.append(filters)
+            instance_filters[filter_spec] = filters
         return instance_filters
 
     def fetch_ec2_ips(self, instance_filter=[], instance_ids=[], use_public=False):
@@ -104,24 +149,48 @@ class EC2ZCSSH(object):
         if instance_filter:
             for name, values in instance_filter.items():
                 ec2_filter_spec.append({ "Name": name, "Values": values })
-        _ips = []
+        self.debug("Fetching IPs for spec: %s" % json.dumps(ec2_filter_spec, indent=2))
+        _ips = {}
         next_token = ''
         while True:
-            response = ec2.describe_instances(Filters=ec2_filter_spec, InstanceIds=instance_ids, NextToken=next_token)
+            if instance_filter:
+                response = ec2.describe_instances(Filters=ec2_filter_spec, NextToken=next_token)
+            else:
+                response = ec2.describe_instances(InstanceIds=instance_ids)
             for reservation in response['Reservations']:
                 for instance in reservation['Instances']:
                     ip = instance.get('PublicIpAddress') if use_public else instance.get('PrivateIpAddress')
                     if not ip:
-                        print("WARNING: No IP found for instance %s" % instance.get('InstanceId'))
+                        self.warning("WARNING: No IP found for instance %s" % instance.get('InstanceId'))
                         continue
-                    _ips.append(ip)
+                    _ips[instance.get('InstanceId')] = ip
             if not _ips:
-                print("WARNING: No IPs found for filter: %s" % instance_filter)
+                self.warning("WARNING: No IPs found for filter: %s" % instance_filter)
                 continue
             next_token = response.get('NextToken')
             if not next_token: break
         return _ips
 
+    def warning(self, text):
+        print(colored("WARNING: %s" % text, 'yellow'), file=sys.stderr)
+        if self.args.die_on_warning: self.should_die = True
+
+    def error(self, text):
+        print(colored("ERROR: %s" % text, 'red'), file=sys.stderr)
+        self.should_die = True
+
+    def ok(self, text):
+        if self.args.quiet: return
+        print(colored("OK: %s" % text, 'green'))
+
+    def info(self, text):
+        if not self.args.verbose: return
+        print("INFO: %s" % text)
+
+    def debug(self, text):
+        if not self.args.debug: return
+        print("DEBUG: %s" % text)
+
 if __name__ == '__main__':
-    ec2zcssh = EC2ZCSSH()
+    ec2zcssh = Ec2zcssh()
     ec2zcssh.run()
