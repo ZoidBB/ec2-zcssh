@@ -36,14 +36,31 @@ class EC2ZCSSH(object):
         args = parser.parse_args()
         self.validate_args(args)
         
-        ips = args.ips
+        ips = []
+
+        for ip in args.ips:
+            if not ip in ips:
+                ips.append(ip)
+            else:
+                print('WARNING: Deduplicating IP %s' % ip)
+
         if args.filter:
             instance_filters = self.process_filters(args.filter)
             for instance_filter in instance_filters:
-                ips += self.fetch_ec2_ips(instance_filter=instance_filter, use_public=args.public)
+                _ips = self.fetch_ec2_ips(instance_filter=instance_filter, use_public=args.public)
+                for ip in _ips:
+                    if not ip in ips:
+                        ips.append(ip)
+                    else:
+                        print('WARNING: Deduplicating IP %s' % ip)
 
         if args.instance:
-            ips += self.fetch_ec2_ips(instance_ids=args.instance, use_public=args.public)
+            _ips = self.fetch_ec2_ips(instance_ids=args.instance, use_public=args.public)
+            for ip in args.ips:
+                if not ip in ips:
+                    ips.append(ip)
+                else:
+                    print('WARNING: Deduplicating IP %s' % ip)
 
         process = subprocess.Popen(
             self.make_cmd(ips, args), 
@@ -69,12 +86,6 @@ class EC2ZCSSH(object):
            not args.instance:
             print('You must specify at at least one filter, instance id, or IP address')
             sys.exit(1)
-
-        for ip in args.ips:
-            if not ip in self.ips:
-                self.ips.append(ip)
-            else:
-                print('WARNING: Deduplicating IP %s' % ip)
 
     def process_filters(self, filters):
         instance_filters = []
