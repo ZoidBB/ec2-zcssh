@@ -53,7 +53,7 @@ class EC2ZCSSH(object):
         process.communicate()
 
     def make_cmd(self, ips, args):
-        cmd = ['./zcssh']
+        cmd = ['zcssh']
         if args.login:
             cmd.append('-l')
             cmd.append(args.login)
